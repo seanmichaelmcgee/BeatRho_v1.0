@@ -1,0 +1,554 @@
+# Document 10: Validation and Iteration Strategy (RNA 3D Structure Prediction)
+
+**Version:** 1.0  
+**Date:** 2025-04-20  
+**Purpose:** Define a comprehensive approach for validating the RNA 3D structure prediction pipeline, from initial technical validation through model refinement and Kaggle submission. This document provides high-level strategic guidance while leaving implementation details to coding agents.
+
+## 1. Validation Strategy Overview
+
+The validation strategy follows a progressive approach, starting with lightweight technical validation and advancing toward comprehensive scientific evaluation. This accommodates the unique challenges of RNA structure prediction:
+
+1. **Limited Training Data:** With only ~715 targets available, each data point is valuable
+2. **Diverse RNA Structures:** Need to validate across varied RNA topologies and sizes
+3. **Kaggle Competition Focus:** Ultimately targeting TM-score optimization
+4. **Resource Constraints:** Balancing validation thoroughness with computational efficiency
+
+## 2. Validation Data Strategy
+
+### 2.1 Data Selection Protocol
+
+* **Technical Validation Subset:**
+  * 5-10 diverse RNA sequences respecting temporal cutoff (pre-2022-05-27)
+  * Select varied sequence lengths (short: <50nt, medium: 50-150nt, long: >150nt)
+  * Include varied secondary structure patterns (hairpins, pseudoknots, multi-loops)
+
+* **Limited Training Subset:**
+  * 20-30 sequences for initial learning validation
+  * Stratified selection across RNA classes (tRNA, rRNA fragments, ribozymes, etc.)
+  * Balance between "easy" and "challenging" structures based on prediction difficulty
+
+* **Scientific Validation Subset:**
+  * Use a portion (3-5) of the CASP15 validation sequences
+  * Reserve remaining CASP15 sequences for final validation
+  * Create synthetic test cases with controlled properties for specific feature testing
+
+### 2.2 Temporal Cutoff Enforcement
+
+* Enforce strict temporal filtering (pre-2022-05-27) for all validation data
+* Document publication date for each validation sequence
+* Add sanity check in validation notebook to confirm temporal compliance
+
+### 2.3 Data Preparation Guidelines
+
+```python
+# Example selection approach
+def create_validation_subsets(sequences_df, labels_df, temporal_cutoff="2022-05-27"):
+    """Create stratified validation subsets while respecting temporal cutoff."""
+    # Filter by temporal cutoff
+    valid_df = sequences_df[pd.to_datetime(sequences_df['temporal_cutoff']) <= pd.to_datetime(temporal_cutoff)]
+    
+    # Group by sequence length
+    short = valid_df[valid_df['sequence'].str.len() < 50]
+    medium = valid_df[(valid_df['sequence'].str.len() >= 50) & (valid_df['sequence'].str.len() <= 150)]
+    long = valid_df[valid_df['sequence'].str.len() > 150]
+    
+    # Select from each group
+    technical_subset = pd.concat([
+        short.sample(min(2, len(short))),
+        medium.sample(min(5, len(medium))),
+        long.sample(min(3, len(long)))
+    ])
+    
+    # Further selection for training subset...
+    
+    return {
+        'technical': technical_subset['target_id'].tolist(),
+        'training': training_subset['target_id'].tolist(),
+        'scientific': scientific_subset['target_id'].tolist()
+    }
+```
+
+## 3. Performance Metrics
+
+### 3.1 Primary Metric: TM-score
+
+* **Implementation:** US-align as specified in Kaggle evaluation
+* **Scoring Formula:** 
+  ```
+  TM-score = max(1/Lref * sum[i=1,Lalign](1/(1+(di/d0)²)))
+  ```
+  where:
+  - Lref is residue count in reference structure
+  - Lalign is number of aligned residues
+  - di is distance between ith pair of aligned residues
+  - d0 is scaling factor based on sequence length
+
+* **Calculation Protocol:**
+  * For each target: Calculate best-of-5 TM-score (comparing to ground truth)
+  * Average across all validation targets
+  * Report per-target scores for detailed analysis
+
+### 3.2 Secondary Metrics
+
+#### 3.2.1 RMSD (Root Mean Square Deviation)
+
+* Measures average distance between aligned atoms
+* Complements TM-score by providing absolute deviation magnitudes
+* More sensitive to outliers/local errors than TM-score
+* Implementation:
+  ```python
+  def calculate_rmsd(pred_coords, true_coords, mask=None):
+      """Calculate RMSD after optimal superposition."""
+      # Apply mask if provided
+      if mask is not None:
+          pred = pred_coords[mask]
+          true = true_coords[mask]
+      else:
+          pred = pred_coords
+          true = true_coords
+          
+      # Center coordinates
+      pred_centered = pred - pred.mean(axis=0)
+      true_centered = true - true.mean(axis=0)
+      
+      # Compute optimal rotation using Kabsch algorithm
+      # (implementation details omitted for brevity)
+      
+      # Calculate RMSD after alignment
+      squared_diff = np.sum((pred_aligned - true_centered) ** 2, axis=1)
+      rmsd = np.sqrt(np.mean(squared_diff))
+      return rmsd
+  ```
+
+#### 3.2.2 Per-residue Confidence Correlation
+
+* Measures how well the model's confidence predictions correlate with actual accuracy
+* Critical for assessing model calibration
+* Implementation:
+  ```python
+  def confidence_correlation(pred_confidence, pred_coords, true_coords, mask=None):
+      """Calculate correlation between predicted confidence and actual accuracy."""
+      # Calculate per-residue error
+      error = np.sqrt(np.sum((pred_coords - true_coords)**2, axis=1))
+      
+      # Apply mask if provided
+      if mask is not None:
+          confidence = pred_confidence[mask]
+          error = error[mask]
+      else:
+          confidence = pred_confidence
+      
+      # Calculate correlation (higher is better)
+      correlation = np.corrcoef(confidence, -error)[0, 1]  # Negative because lower error = higher accuracy
+      return correlation
+  ```
+
+### 3.3 Tracking and Visualization
+
+* Track metrics over training iterations
+* Generate comparative visualizations:
+  * TM-score distribution across validation set
+  * Per-residue error heatmaps
+  * Confidence vs. actual accuracy scatter plots
+
+## 4. Notebook Integration
+
+### 4.1 Validation Notebook Structure
+
+Organize validation notebooks into four standardized sections:
+
+1. **Setup & Data Loading**
+   ```python
+   # Import dependencies
+   import os
+   import numpy as np
+   import pandas as pd
+   import torch
+   
+   # Load validation data
+   sequences_df = pd.read_csv("train_sequences.csv")
+   labels_df = pd.read_csv("train_labels.csv")
+   validation_subsets = create_validation_subsets(sequences_df, labels_df)
+   
+   # Set up data loader for validation subset
+   val_loader = create_data_loader(
+       sequences_csv_path=...,
+       labels_csv_path=...,
+       features_dir=...,
+       target_ids=validation_subsets['technical']  # or 'training' or 'scientific'
+   )
+   ```
+
+2. **Model Loading**
+   ```python
+   # Load model configuration
+   with open("config/default_config.yaml", "r") as f:
+       config = yaml.safe_load(f)
+       
+   # Create and initialize model
+   model = RNAFoldingModel(config)
+   
+   # Load weights (if available)
+   if os.path.exists("checkpoints/model_v1.pt"):
+       model.load_state_dict(torch.load("checkpoints/model_v1.pt"))
+   
+   # Set evaluation mode
+   model.eval()
+   ```
+
+3. **Inference & Prediction**
+   ```python
+   # Run inference
+   predictions = {}
+   ground_truth = {}
+   
+   with torch.no_grad():
+       for batch in val_loader:
+           # Move to appropriate device
+           batch = {k: v.to(device) if isinstance(v, torch.Tensor) else v 
+                   for k, v in batch.items()}
+           
+           # Generate predictions
+           outputs = model(batch)
+           
+           # Store predictions and ground truth
+           for i, target_id in enumerate(batch['target_ids']):
+               predictions[target_id] = {
+                   'coords': outputs['pred_coords'][i].cpu().numpy(),
+                   'confidence': outputs['pred_confidence'][i].cpu().numpy(),
+               }
+               ground_truth[target_id] = batch['coordinates'][i].cpu().numpy()
+   ```
+
+4. **Evaluation & Metrics**
+   ```python
+   # Calculate metrics
+   tm_scores = []
+   rmsd_values = []
+   confidence_correlations = []
+   
+   for target_id in predictions:
+       # Calculate TM-score
+       tm_score = calculate_tm_score(
+           predictions[target_id]['coords'],
+           ground_truth[target_id]
+       )
+       tm_scores.append(tm_score)
+       
+       # Calculate secondary metrics
+       rmsd = calculate_rmsd(
+           predictions[target_id]['coords'],
+           ground_truth[target_id]
+       )
+       rmsd_values.append(rmsd)
+       
+       conf_corr = confidence_correlation(
+           predictions[target_id]['confidence'],
+           predictions[target_id]['coords'],
+           ground_truth[target_id]
+       )
+       confidence_correlations.append(conf_corr)
+   
+   # Report results
+   print(f"Average TM-score: {np.mean(tm_scores):.4f}")
+   print(f"Average RMSD: {np.mean(rmsd_values):.4f} Å")
+   print(f"Average confidence correlation: {np.mean(confidence_correlations):.4f}")
+   ```
+
+### 4.2 Visualization Components
+
+Reference the separate visualization notebook for detailed structure examination:
+
+```python
+# Basic metric visualization
+import matplotlib.pyplot as plt
+import seaborn as sns
+
+# Plot TM-score distribution
+plt.figure(figsize=(10, 6))
+sns.histplot(tm_scores, kde=True)
+plt.title("TM-score Distribution")
+plt.xlabel("TM-score")
+plt.ylabel("Count")
+plt.axvline(np.mean(tm_scores), color='r', linestyle='--', 
+            label=f"Mean: {np.mean(tm_scores):.4f}")
+plt.legend()
+plt.savefig("validation_tm_scores.png")
+
+# For detailed structure visualization, refer to visualization notebook
+print("For 3D structure visualization, run visualization_notebook.ipynb with these predictions")
+```
+
+### 4.3 Kaggle Transition Strategy
+
+For novice users transitioning from local development to Kaggle:
+
+1. **Preparation Steps:**
+   * Ensure all paths are parameterized (no hardcoded paths)
+   * Verify all dependencies are Kaggle-compatible
+   * Confirm no reliance on local file system structure
+
+2. **Kaggle Setup Instructions:**
+   * Create new notebook in Kaggle environment
+   * Add this competition: "Stanford RNA 3D Folding"
+   * Enable GPU accelerator (Settings → Accelerator → GPU)
+   * Set notebook to private if working on proprietary implementations
+
+3. **Code Transfer:**
+   * Copy essential code sections from validation notebook
+   * Adjust paths to use Kaggle's directory structure:
+     - Input data: `/kaggle/input/stanford-rna-3d-folding/`
+     - Output: `/kaggle/working/`
+   * Import necessary modules from `src/` directory
+
+4. **Simple Example:**
+   ```python
+   # Kaggle path adjustments
+   KAGGLE_INPUT = "/kaggle/input/stanford-rna-3d-folding"
+   KAGGLE_WORKING = "/kaggle/working"
+   
+   # Load test sequences
+   test_sequences = pd.read_csv(f"{KAGGLE_INPUT}/test_sequences.csv")
+   
+   # Create data loader
+   test_loader = create_data_loader(
+       sequences_csv_path=f"{KAGGLE_INPUT}/test_sequences.csv",
+       labels_csv_path=None,  # No labels for test set
+       features_dir=f"{KAGGLE_INPUT}/features",
+       require_features=False
+   )
+   
+   # Load model and generate predictions
+   # (similar to validation notebook)
+   
+   # Save submission in required format
+   submission_df.to_csv(f"{KAGGLE_WORKING}/submission.csv", index=False)
+   ```
+
+## 5. Resource-Efficient Validation
+
+### 5.1 Tiered Validation Strategy
+
+Implement a three-tier validation approach:
+
+1. **Fast Technical Validation (Tier 1)**
+   * Purpose: Verify code functionality and basic correctness
+   * Data: 3-5 sequences (one from each length category)
+   * Metrics: Basic shape checks, loss values, simple RMSD
+   * Frequency: After every significant code change
+   * Runtime target: <5 minutes
+
+2. **Intermediate Scientific Validation (Tier 2)**
+   * Purpose: Assess model learning and prediction quality
+   * Data: 10-15 sequences (balanced distribution)
+   * Metrics: TM-score, RMSD, confidence correlation
+   * Frequency: Daily during active development
+   * Runtime target: 15-30 minutes
+
+3. **Comprehensive Validation (Tier 3)**
+   * Purpose: Full evaluation of model performance
+   * Data: All scientific validation sequences (3-5 CASP15 targets)
+   * Metrics: Full suite of primary and secondary metrics
+   * Frequency: Weekly and before major version changes
+   * Runtime target: 1-2 hours
+
+### 5.2 Validation Frequency and Triggers
+
+Schedule validations based on development stages:
+
+| Development Stage | Tier 1 (Technical) | Tier 2 (Scientific) | Tier 3 (Comprehensive) |
+|-------------------|--------------------|--------------------|------------------------|
+| Initial Component Development | After each component | Not required | Not required |
+| Integration Phase | After each integration | After key milestones | Not required |
+| Model Refinement | After parameter changes | Daily | Weekly |
+| Pre-Submission | After final changes | Before submission | Before submission |
+
+Additional triggers:
+* Run Tier 1 validation after any change to data pipeline
+* Run Tier 2 validation after any change to model architecture
+* Run Tier 3 validation after significant hyperparameter tuning
+
+### 5.3 Resource Management
+
+Optimize resource usage during validation:
+
+* **Memory Management:**
+  * Set appropriate batch sizes based on sequence length
+  * Implement gradient checkpointing for long sequences
+  * Clear GPU cache between validation runs
+
+* **Computation Efficiency:**
+  * Parallelize metric calculations where possible
+  * Cache feature computations to avoid redundancy
+  * Use mixed precision inference for faster evaluation
+
+## 6. Iteration Decision Framework
+
+### 6.1 V1 to V2 Transition Criteria
+
+Criteria for determining when to transition from V1 to V2 components:
+
+1. **Performance Thresholds:**
+   * V1 achieves mean TM-score >0.4 on scientific validation set
+   * Per-residue confidence correlation >0.5
+   * Or: V1 performance plateaus with no improvement for 3+ iterations
+
+2. **Technical Requirements:**
+   * All V1 components implemented and tested
+   * Basic integration validated without memory issues
+   * Core functionality verified on different sequence lengths
+
+3. **Documentation Requirements:**
+   * Performance analysis of V1 limitations documented
+   * Clear hypothesis for V2 improvements formulated
+   * Implementation plan for V2 components approved
+
+### 6.2 Experiment Tracking and Versioning
+
+Track experiments and model versions systematically:
+
+1. **Version Numbering Scheme:**
+   * **0.1.x.y:** Initial V1 validation iterations
+     * x: Major changes to data processing
+     * y: Model parameter adjustments
+   * **0.2.x.y:** V1 submission candidates
+     * x: Architecture refinements
+     * y: Hyperparameter tuning
+   * **0.5.x.y:** V2 implementations
+     * x: Major V2 component additions
+     * y: V2 component refinements
+
+2. **Notebook Versioning Protocol:**
+   * Name notebooks with version: `validation_vX.Y.Z.ipynb`
+   * Document version changes in initial markdown cell
+   * Store notebooks in version-specific directories
+   * Track key metrics for each version in a central results file
+
+3. **Experiment Metadata Recording:**
+   ```python
+   # Example experiment metadata tracking
+   experiment_metadata = {
+       "version": "0.1.2.3",
+       "date": "2025-04-25",
+       "model_config": config,
+       "validation_subset": "scientific",
+       "results": {
+           "mean_tm_score": 0.456,
+           "mean_rmsd": 3.24,
+           "mean_confidence_correlation": 0.623
+       },
+       "notes": "Increased transformer layers from 4 to 6, no significant improvement"
+   }
+   
+   # Save metadata
+   with open(f"experiments/metadata_v0.1.2.3.json", "w") as f:
+       json.dump(experiment_metadata, f, indent=2)
+   ```
+
+### 6.3 Hypothesis Testing Framework (V2 Placeholder)
+
+*This section will be expanded during V2 planning, but initial structure includes:*
+
+* Formulation of specific hypotheses about model limitations
+* Design of controlled experiments to test each hypothesis
+* Statistical framework for evaluating significance of changes
+* Documentation template for hypothesis testing results
+
+## 7. Baseline Comparisons
+
+### 7.1 Baseline Model Selection
+
+Use AlphaFold 2 (or OpenFold) as primary baseline:
+
+* Established performance on protein structures
+* Can be applied to RNA with limitations
+* Provides sanity check for implementation correctness
+
+Additional simpler baselines:
+* Template-based modeling (when templates available)
+* Secondary structure + simple 3D arrangement heuristics
+* Physics-based energy minimization
+
+### 7.2 Baseline Implementation
+
+```python
+# Pseudocode for AlphaFold/OpenFold baseline
+def run_alphafold_baseline(sequences, output_dir):
+    """Run AlphaFold 2 or OpenFold as baseline for comparison."""
+    results = {}
+    for target_id, sequence in sequences.items():
+        # Convert RNA to protein-like representation for AlphaFold
+        # (implementation details depend on available APIs)
+        
+        # Run prediction
+        af_result = run_alphafold_prediction(sequence)
+        
+        # Extract coordinates
+        coords = extract_backbone_coords(af_result)
+        
+        # Store results
+        results[target_id] = coords
+        
+    return results
+```
+
+### 7.3 Comparative Analysis
+
+For each validation set, calculate:
+* Performance delta vs. baseline (TM-score, RMSD)
+* Per-residue accuracy comparison
+* Structure visualization highlighting differences
+
+Report relative improvement over baseline as key progress metric.
+
+## 8. Implementation Workflow Integration
+
+### 8.1 Validation in Development Cycle
+
+Integrate validation strategy with development workflow:
+
+1. **Feature Implementation**
+   * Implement component according to specification
+   * Run unit tests to verify component functionality
+
+2. **Component Integration**
+   * Integrate component into pipeline
+   * Run Tier 1 validation to verify technical correctness
+
+3. **Model Training**
+   * Train model with new component
+   * Run Tier 2 validation to assess scientific impact
+
+4. **Refinement**
+   * Analyze validation results
+   * Implement targeted improvements
+   * Run appropriate validation tier
+
+5. **Version Advancement**
+   * Run Tier 3 validation before major version changes
+   * Document comprehensive results
+   * Make transition decisions based on validation metrics
+
+### 8.2 Continuous Improvement Process
+
+Establish a continuous improvement cycle:
+
+1. **Measure:** Run appropriate validation tier
+2. **Analyze:** Identify performance bottlenecks
+3. **Hypothesize:** Formulate improvement hypotheses
+4. **Implement:** Make targeted changes
+5. **Validate:** Re-run validation to measure impact
+6. **Document:** Record findings regardless of outcome
+
+## 9. Conclusion
+
+This validation and iteration strategy provides a structured approach to developing and refining the RNA 3D structure prediction model. By following this progressive validation methodology and systematic versioning approach, we can efficiently develop a competitive model despite the constraints of limited training data and computational resources.
+
+The strategy emphasizes:
+* Data efficiency through carefully curated validation subsets
+* Resource management through tiered validation
+* Scientific rigor through comprehensive metrics
+* Systematic experimentation through versioned notebooks
+* Practical considerations for Kaggle deployment
+
+Implementation details of the validation components are delegated to AI coding agents guided by this strategic framework. As the project advances from V1 to V2, this validation strategy will evolve with more sophisticated metrics and testing protocols.

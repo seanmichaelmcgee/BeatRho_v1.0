@@ -1,0 +1,14 @@
+# Ignore data folders
+betabend-refactor/data/
+
+# Common files to ignore
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.log
+.env
+venv/
+env/
+ENV/

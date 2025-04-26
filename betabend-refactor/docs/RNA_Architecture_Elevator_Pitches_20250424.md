@@ -1,0 +1,23 @@
+# RNA 3D Structure Prediction Model: Elevator Pitches (2025-04-24)
+
+Five concise versions explaining our RNA 3D structure prediction architecture, each from a different angle.
+
+## 1. Technical Architecture Focus
+
+Our RNA 3D structure prediction model employs a transformer-based architecture with 24 stacked blocks processing both residue-level and pair-level representations simultaneously. The pipeline begins with an embedding module that converts RNA sequences and biological features into dense representations, followed by transformer blocks with multi-head attention operating on residue representations and MLP updates for pair data. The final representations feed into a specialized Invariant Point Attention module that projects to 3D coordinates, while separate prediction heads generate per-residue confidence scores and torsion angles. This hybrid architecture combines the representational power of transformers with geometry-aware coordinate prediction, optimized with memory-efficient techniques like gradient checkpointing and adaptive batching.
+
+## 2. Data and Features Focus
+
+Our RNA folding model ingests a rich set of biological features to predict accurate 3D structures across diverse RNA families. The architecture processes four key feature types: sequence information (encoded nucleotides), optional dihedral angles (torsion parameters), thermodynamic features (base-pairing probabilities, accessibility, entropy), and evolutionary signals (coupling matrices from mutual information analysis). These multi-modal features flow through embedding layers that create two parallel representation streams - residue-level and pair-level - which interact through transformer blocks before final coordinate prediction. The dual-mode validation system can operate with either complete features (training mode) or limited features (test mode), enabling robust evaluation through metrics like RMSD and TM-score across different RNA structural contexts.
+
+## 3. Training and Inference Focus
+
+Our RNA structure prediction pipeline implements sophisticated training and inference strategies to maximize performance on limited computational resources. The training process utilizes curriculum learning with 13 carefully staged length increases, allowing the model to progressively handle more complex structures while maintaining stable gradients. During inference, the model employs mixed precision execution, enhanced positional encoding that dynamically extends for sequences beyond training length, and memory-efficient tensor management with explicit cleanup between processing steps. A robust feature loading system handles missing or corrupted data with appropriate defaults, while the submission pipeline generates multiple conformations per sequence with controlled diversity through temperature sampling.
+
+## 4. Pipeline and Workflow Focus
+
+Our end-to-end RNA structure prediction pipeline streamlines the journey from sequence to 3D coordinates through four major processing blocks. The workflow begins with intelligent feature loading and preparation, handling diverse file formats and gracefully managing missing data points. Preprocessed features then flow through embedding layers that create dual-stream representations capturing both per-residue properties and pairwise relationships. These representations undergo transformation through 24 attention-guided transformer blocks that iteratively refine the structural understanding. Finally, specialized prediction modules generate 3D coordinates with associated confidence scores, which are then formatted for scientific analysis or competition submission with comprehensive metadata tracking.
+
+## 5. Scientific Impact Focus
+
+Our RNA 3D structure prediction model addresses the critical challenge of understanding RNA function through accurate structural modeling, without requiring experimental determination. The architecture integrates thermodynamic principles of RNA folding with deep learning by processing base-pairing probabilities, positional entropies, and evolutionary couplings through specialized transformer blocks. The model achieves state-of-the-art performance through its 24-block architecture with 384-dimensional embeddings and 24 attention heads, processing both local nucleotide contexts and global pairwise interactions simultaneously. The implementation includes comprehensive validation across diverse RNA families using both RMSD and biologically-relevant metrics like TM-score, enabling new insights into RNA structure-function relationships and potential applications in RNA drug design and synthetic biology.
