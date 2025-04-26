@@ -1,0 +1,62 @@
+name: beatrho-v1.0
+
+channels:
+  - pytorch  # Prioritize PyTorch channel for PyTorch itself
+  - nvidia   # For CUDA toolkit consistency
+  - conda-forge  # High priority for most other packages
+  - defaults
+
+dependencies:
+  # Core Python and compute
+  - python=3.10  # Based on setup.py and environment.yml requirements
+  - pip
+  - numpy>=1.22.0
+  - pandas
+  - scipy
+  - pyyaml  # For configuration files
+  
+  # PyTorch and Tensor Operations
+  - pytorch>=2.1
+  - pytorch-cuda=12.1  # Match the CUDA version in the Docker base image
+  - einops  # Used extensively for tensor manipulations
+  
+  # Machine Learning & Data Science
+  - scikit-learn  # For PCA, dimensionality reduction, and analysis
+  
+  # Logging & Experiment Tracking
+  - tensorboard  # For logging training progress
+  - tqdm  # Progress bars
+  - wandb  # More robust experiment tracking
+  
+  # Testing & Development Tools
+  - pytest  # Required for running tests (used in existing test files)
+  - black  # Code formatting
+  - isort  # Import sorting
+  - mypy  # Type checking
+  
+  # Visualization & Analysis
+  - jupyter
+  - matplotlib
+  - seaborn
+  - plotly  # Interactive visualizations, especially for 3D structures
+  - ipywidgets  # For interactive notebooks
+  
+  # File I/O
+  - h5py  # For HDF5 file format
+  
+  # RhoFold Specific
+  - biopython  # Required by RhoFold components
+  
+  # Pip dependencies
+  - pip:
+    - py3Dmol  # Interactive molecular visualization for notebooks
+    - dm-tree  # From setup.py
+    - python-box  # From setup.py
+    - ml_collections  # From setup.py
+    
+    # Additional dependencies for the IPA module and structure visualization
+    - bio  # Required for RNA structure handling
+    
+    # Development utilities for checkpointing and monitoring
+    - torch-tb-profiler  # Profiling for PyTorch models
+    - memory-profiler  # For detailed memory analysis
